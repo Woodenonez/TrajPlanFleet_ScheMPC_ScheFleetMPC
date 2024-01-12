@@ -6,16 +6,16 @@ import numpy as np
 
 from basic_motion_model.motion_model import UnicycleModel
 
-from interfaces.interface_mpc_tracker import MpcInterface
-from interfaces.interface_motion_plan import MotionPlanInterface
-from pkg_scheduler.job_schedule import JobScheduler
+from pkg_motion_plan.global_path_coordinate import GlobalPathCoordinator
+from pkg_motion_plan.local_traj_plan import LocalTrajPlanner
+from pkg_mpc_tracker.trajectory_tracker import TrajectoryTracker
 from pkg_robot.robot import RobotManager
 
 from configs import MpcConfiguration
 from configs import CircularRobotSpecification
 
 from visualizer.object import CircularVehicleVisualizer
-from visualizer.mpc_plot import MpcPlotInLoop
+from visualizer.mpc_plot import MpcPlotInLoop # type: ignore
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 # DATA_DIR = os.path.join(ROOT_DIR, "data", "test_data")
@@ -41,35 +41,39 @@ start_path = os.path.join(DATA_DIR, "robot_start.json")
 with open(start_path, "r") as f:
     robot_starts = json.load(f)
 
-### Set up scheduler
-scheduler = JobScheduler.from_csv(schedule_path)
-robot_ids = scheduler.robot_ids if robot_ids is None else robot_ids
+### Set up the global path/schedule coordinator
+gpc = GlobalPathCoordinator.from_csv(schedule_path)
+gpc.load_graph_from_json(graph_path)
+gpc.load_map_from_json(map_path, inflation_margin=config_robot.vehicle_width+0.2)
+robot_ids = gpc.robot_ids if robot_ids is None else robot_ids
+static_obstacles = gpc.inflated_map.obstacle_coords_list
 
 ### Set up robots
 robot_manager = RobotManager()
 for rid in robot_ids:
     robot = robot_manager.create_robot(config_robot, UnicycleModel(sampling_time=config_mpc.ts), rid)
     robot.set_state(np.asarray(robot_starts[rid]))
-    planner = MotionPlanInterface(rid, config_mpc, config_robot, verbose=VB)
-    planner.load_map_from_json(map_path, inflation_margin=config_robot.vehicle_width+0.2)
-    planner.load_graph_from_json(graph_path)
-    planner.set_schedule(*scheduler.get_robot_schedule(rid))
-    planner.update_schedule(nomial_speed=1.5, sampling_method="linear")
-    controller = MpcInterface(config_mpc, config_robot, verbose=VB)
+    # planner = MotionPlanInterface(rid, config_mpc, config_robot, verbose=VB)
+    planner = LocalTrajPlanner(config_mpc.ts, config_mpc.N_hor, config_robot.lin_vel_max, verbose=VB)
+    planner.load_map(gpc.inflated_map.boundary_coords, gpc.inflated_map.obstacle_coords_list)
+    controller = TrajectoryTracker(config_mpc, config_robot, robot_id=rid, verbose=VB)
+    controller.load_motion_model(UnicycleModel(sampling_time=config_mpc.ts))
     visualizer = CircularVehicleVisualizer(config_robot.vehicle_width, indicate_angle=True)
     robot_manager.add_robot(robot, controller, planner, visualizer)
-    robot_manager.add_schedule(rid, np.asarray(robot_starts[rid]), scheduler.get_robot_schedule(rid))
+
+    path_coords, path_times = gpc.get_robot_schedule(rid)
+    robot_manager.add_schedule(rid, np.asarray(robot_starts[rid]), path_coords, path_times)
 
 ### Run
 main_plotter = MpcPlotInLoop(config_robot)
-main_plotter.plot_in_loop_pre(planner.current_map, planner.current_graph)
+main_plotter.plot_in_loop_pre(gpc.current_map, gpc.inflated_map, gpc.current_graph)
 color_list = ["b", "r", "g"]
 for i, rid in enumerate(robot_ids):
     planner = robot_manager.get_planner(rid)
     controller = robot_manager.get_controller(rid)
     visualizer = robot_manager.get_visualizer(rid)
     main_plotter.add_object_to_pre(rid,
-                                   planner.current_ref_trajectory,
+                                   planner.ref_traj,
                                    controller.state,
                                    controller.final_goal,
                                    color=color_list[i])
@@ -89,10 +93,13 @@ for kt in range(TIMEOUT):
         visualizer = robot_manager.get_visualizer(rid)
         other_robot_states = robot_manager.get_other_robot_states(rid, config_mpc)
 
-        ref_states, ref_speed = planner.get_local_ref(kt*config_mpc.ts, robot.state)
-        print(f"Robot {rid} ref speed: {ref_speed}") # XXX
+        ref_states, ref_speed, *_ = planner.get_local_ref(kt*config_mpc.ts, (float(robot.state[0]), float(robot.state[1])) )
+        print(f"Robot {rid} ref speed: {round(ref_speed, 4)}") # XXX
         controller.set_ref_states(ref_states, ref_speed=ref_speed)
-        actions, pred_states, cost, closest_obstacle_list, current_refs = controller.run_step(None, other_robot_states)
+        actions, pred_states, current_refs, cost, closest_obstacle_list = controller.run_step(static_obstacles=static_obstacles,
+                                                                                              full_dyn_obstacle_list=None,
+                                                                                              other_robot_states=other_robot_states,
+                                                                                              map_updated=False)
 
         ### Real run
         robot.step(actions[-1])

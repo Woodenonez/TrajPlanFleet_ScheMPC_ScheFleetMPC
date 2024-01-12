@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
-import yaml
-
 from typing import Any, Union
+import yaml # type: ignore
 
 
 class Configurator:
@@ -96,11 +95,13 @@ class MpcConfiguration(_Configuration):
         self.ndynobs = config.ndynobs # dimension of a dynamic-obstacle description
         self.Ndynobs = config.Ndynobs # number of dynamic obstacles
 
-        self.max_solver_time = config.max_solver_time   # maximum time for the solver to run
-        self.build_directory = config.build_directory   # directory to store the generated solver
-        self.build_type = config.build_type             # type of the generated solver
-        self.bad_exit_codes = config.bad_exit_codes     # bad exit codes of the solver
-        self.optimizer_name = config.optimizer_name     # name of the generated solver
+        self.solver_type = config.solver_type           # Determines which solver to use ([P]ANOC or [C]asadi)
+
+        self.max_solver_time = config.max_solver_time   # [P] maximum time for the solver to run
+        self.build_directory = config.build_directory   # [P] directory to store the generated solver
+        self.build_type = config.build_type             # [P] type of the generated solver
+        self.bad_exit_codes = config.bad_exit_codes     # [P] bad exit codes of the solver
+        self.optimizer_name = config.optimizer_name     # [P] name of the generated solver
 
         self.lin_vel_penalty = config.lin_vel_penalty   # Cost for linear velocity control action
         self.lin_acc_penalty = config.lin_acc_penalty   # Cost for linear acceleration

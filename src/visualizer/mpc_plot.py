@@ -1,4 +1,7 @@
+# type: ignore
+
 import math
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -12,7 +15,7 @@ from matplotlib.gridspec import GridSpec
 # Type hint only
 from matplotlib.axes import Axes
 from configs import CircularRobotSpecification
-from typing import List
+from basic_map.map_geometric import GeometricMap
 
 
 def figure_formatter(window_title:str, num_axes_per_column:list=None, num_axes_per_row:list=None, figure_size:tuple=None):
@@ -55,7 +58,7 @@ def figure_formatter(window_title:str, num_axes_per_column:list=None, num_axes_p
     fig.canvas.manager.set_window_title(window_title)
     gs = GridSpec(n_row, n_col, figure=fig)
 
-    axis_format:List[list] = []
+    axis_format:list[list] = []
     if num_axes_per_column is not None:
         for i in range(n_col):
             axis_format.append([])
@@ -79,7 +82,8 @@ class MpcPlotInLoop:
             plot_dict_pre   : A dictionary of all plot objects which need to be manually flushed.
             plot_dict_temp  : A dictionary of all plot objects which only exist for one time step.
             plot_dict_inloop: A dictionary of all plot objects which update (append) every time step.
-        TODO
+
+        TODO:
             - Methods to flush part of the plot and to destroy an object in case it is not active.
         """
         self.ts    = config.ts
@@ -103,7 +107,7 @@ class MpcPlotInLoop:
     def close(self):
         plt.close(self.fig)
 
-    def plot_in_loop_pre(self, map_manager, graph_manager=None):
+    def plot_in_loop_pre(self, original_map: GeometricMap, inflated_map:Optional[GeometricMap]=None, graph_manager=None):
         """
         Description:
             Create the figure and prepare all axes.
@@ -117,7 +121,9 @@ class MpcPlotInLoop:
         self.omega_ax.set_ylabel('Angular velocity [rad/s]')
         self.cost_ax.set_ylabel('Cost')
 
-        map_manager.plot(self.map_ax)
+        if inflated_map is not None:
+            inflated_map.plot(self.map_ax, {'c': 'r'})
+        original_map.plot(self.map_ax)
         self.map_ax.set_xlabel('X [m]', fontsize=15)
         self.map_ax.set_ylabel('Y [m]', fontsize=15)
         self.map_ax.axis('equal')

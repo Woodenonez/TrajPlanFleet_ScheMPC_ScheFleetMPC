@@ -1,22 +1,21 @@
-import casadi.casadi as cs
-from opengen import opengen as og # or "import opengen as og"
+from typing import Union, List, Callable
+
+import casadi.casadi as cs # type: ignore
+from opengen import opengen as og # type: ignore # or "import opengen as og"
 
 from . import mpc_helper
 from . import mpc_cost
 
 from configs import MpcConfiguration, CircularRobotSpecification
 
-from typing import Union, List, Callable
 
+class PanocBuilder:
+    """Build the MPC module via OPEN. Define states, inputs, cost, and constraints.
 
-class MpcModule:
-    """Build the MPC module. Define states, inputs, cost, and constraints.
-
-    Functions
+    Methods:
         build: Build the MPC problem and solver.
     """
     def __init__(self, mpc_config: MpcConfiguration, robot_config: CircularRobotSpecification):
-        self._prt_name = '[MPC-Builder]'
         self.config = mpc_config
         self.robot_config = robot_config
         ### Frequently used
@@ -28,19 +27,19 @@ class MpcModule:
     def build(self, motion_model: Callable[[cs.SX, cs.SX, float], cs.SX], use_tcp:bool=False, test:bool=False):
         """Build the MPC problem and solver, including states, inputs, cost, and constraints.
 
-        Arguments:
+        Args:
             motion_model: Callable function `s'=f(s,u,ts)` that generates next state given the current state and action.
             use_tcp : If the solver will be called directly or via TCP.
-            test : If the function is called for testing purposes.
+            test : If the function is called for testing purposes, i.e. without building the solver.
 
-        Conmments:
+        Notes:
             Inputs (u): speed, angular speed
             states (s): x, y, theta
             
-        Reference:
+        References:
             Ellipse definition: [https://math.stackexchange.com/questions/426150/what-is-the-general-equation-of-the-ellipse-that-is-not-in-the-origin-and-rotate]
         """
-        print(f'{self._prt_name} Building MPC module...')
+        print(f'[{self.__class__.__name__}] Building MPC module...')
 
         u = cs.SX.sym('u', self.nu*self.N_hor)  # 0. Inputs from 0 to N_hor-1
 
@@ -199,10 +198,10 @@ class MpcModule:
         builder = og.builder.OpEnOptimizerBuilder(problem, meta, build_config, solver_config) \
             .with_verbosity_level(1)
         if test:
-            print(f"{self._prt_name} MPC builder is tested without building.")
+            print(f"[{self.__class__.__name__}] MPC builder is tested without building.")
             return 1
         else:
             builder.build()
 
-        print(f'{self._prt_name} MPC module built.')
+        print(f'[{self.__class__.__name__}] MPC module built.')
 

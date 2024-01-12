@@ -1,12 +1,12 @@
-import casadi.casadi as cs
+import casadi.casadi as cs # type: ignore
 
 from typing import List
 
 def dist_to_points_square(point: cs.SX, points: cs.SX):
     """Calculate the squared distance from a target point to a set of points.
-    
-    Arguments:
-        point: The (1*n)-dim target point.
+
+    Args:
+        point: The target point, row vector
         points: Shape (m*n) with m points.
 
     Returns:
@@ -17,14 +17,14 @@ def dist_to_points_square(point: cs.SX, points: cs.SX):
 def dist_to_lineseg(point: cs.SX, line_segment: cs.SX):
     """Calculate the distance from a target point to a line segment.
 
-    Arguments:
+    Args:
         point: The (1*n)-dim target point.
         line_segment: The (2*n) edge points.
 
     Returns:
         distance: The (1*1)-dim distance from the target point to the line segment.
 
-    Reference:
+    References:
         Link: https://math.stackexchange.com/questions/330269/the-distance-from-a-point-to-a-line-segment
     """
     (p, s1, s2) = (point[:2], line_segment[[0],:], line_segment[[1],:])
@@ -38,7 +38,7 @@ def dist_to_lineseg(point: cs.SX, line_segment: cs.SX):
 def inside_ellipses(point: cs.SX, ellipse_param: List[cs.SX]):
     """Check if a point is inside a set of ellipses.
     
-    Arguments:
+    Args:
         point: The (1*n)-dim target point.
         ellipse_param: Shape (5 or 6 * m) with m ellipses. 
                        Each ellipse is defined by (cx, cy, rx, ry, angle, alpha).
@@ -54,7 +54,7 @@ def inside_ellipses(point: cs.SX, ellipse_param: List[cs.SX]):
 def inside_cvx_polygon(point: cs.SX, b: cs.SX, a0: cs.SX, a1: cs.SX):
     """Check if a point is inside a convex polygon defined by half-spaces.
     
-    Arguments:
+    Args:
         point: The (1*n)-dim target point.
         b: Shape  (1*m) with m half-space offsets.
         a0: Shape (1*m) with m half-space weight vectors.
@@ -63,7 +63,7 @@ def inside_cvx_polygon(point: cs.SX, b: cs.SX, a0: cs.SX, a1: cs.SX):
     Returns:
         is_inside: The (1*1)-dim indicator. If inside, return positive value, else return 0.
 
-    Comments:
+    Notes:
         Each half-space is defined as `b - [a0,a1]*[x,y]' > 0`.
         If prod(|max(0,all)|)>0, then the point is inside; Otherwise not.
     """
@@ -77,7 +77,7 @@ def inside_cvx_polygon(point: cs.SX, b: cs.SX, a0: cs.SX, a1: cs.SX):
 def outside_cvx_polygon(point: cs.SX, b: cs.SX, a0: cs.SX, a1: cs.SX):
     """Check if a point is outside a convex polygon defined by half-spaces.
 
-    Arguments:
+    Args:
         point: The (1*n)-dim target point.
         b: Shape  (1*m) with m half-space offsets.
         a0: Shape (1*m) with m half-space weight vectors.
@@ -86,7 +86,7 @@ def outside_cvx_polygon(point: cs.SX, b: cs.SX, a0: cs.SX, a1: cs.SX):
     Returns:
         is_outside: The (1*1)-dim indicator. If outside, return positive value, else return 0.
 
-    Comments:
+    Notes:
         Each half-space if defined as `b - [a0,a1]*[x,y]' > 0`.
         If sum(|min(0,all)|)>0, then the point is outside; Otherwise not.
     """

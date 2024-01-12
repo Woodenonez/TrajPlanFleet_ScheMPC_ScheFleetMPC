@@ -1,24 +1,27 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Union
 
 import math
-import matplotlib.patches as patches
+import matplotlib.patches as patches # type: ignore
 
-from shapely.geometry import Point, Polygon
-from shapely.geometry import JOIN_STYLE
+from shapely.geometry import Point, Polygon # type: ignore
+from shapely.geometry import JOIN_STYLE # type: ignore
 
-from typing import List, Tuple, Union
-from matplotlib.axes import Axes
+from matplotlib.axes import Axes # type: ignore
+
+
+PathNode = tuple[float, float]
 
 
 class PlainGeometry(ABC):
     """A plain geometry class without any dependencies."""
     @abstractmethod
-    def __call__(self) -> None:
+    def __call__(self):
         """The call method returns the geometry in a native python (e.g. tuple) format."""
-        return None
+        pass
     
-    def inflate(self, margin: float, *args) -> None:
+    def inflate(self, margin: float, *args):
         """Inflate the geometry by a given margin."""
         raise NotImplementedError
     
@@ -33,7 +36,7 @@ class PlainPoint(PlainGeometry):
     x: float
     y: float
 
-    def __call__(self) -> Tuple[float, float]:
+    def __call__(self) -> PathNode:
         return (self.x, self.y)
 
     def __getitem__(self, idx) -> float:
@@ -51,7 +54,7 @@ class PlainPoint(PlainGeometry):
         """Create a shapely Point from a PlainPoint."""
         return Point(self.x, self.y)
     
-    def inflate(self, margin: float, n:int=4) -> 'PlainPoint':
+    def inflate(self, margin: float, n:int=4) -> 'PlainPoint': # type: ignore
         """[shapely] Inflate a point (to a regular polygon) by a given positive margin.
         
         The number of vertices of the polygon is given by 4*n.
@@ -66,7 +69,7 @@ class PlainPoint(PlainGeometry):
 class PlainPolygon(PlainGeometry):
     """A plain polygon class without any dependencies.
     Certain functions need the shapely library."""
-    vertices: List[PlainPoint]
+    vertices: list[PlainPoint]
     angle: float = 0
 
     @property
@@ -78,14 +81,14 @@ class PlainPolygon(PlainGeometry):
         """[shapely] Return the centroid of the polygon."""
         return PlainPoint.from_shapely(self.to_shapely().centroid)
 
-    def __call__(self) -> List[tuple]:
+    def __call__(self) -> list[PathNode]:
         return [x() for x in self.vertices]
 
     def __getitem__(self, idx) -> PlainPoint:
         return self.vertices[idx]
 
     @classmethod
-    def from_list_of_tuples(cls, vertices: List[tuple]):
+    def from_list_of_tuples(cls, vertices: list[PathNode]):
         return cls([PlainPoint(*v) for v in vertices]) 
     
     @classmethod
@@ -97,7 +100,7 @@ class PlainPolygon(PlainGeometry):
         """Create a shapely Polygon from a PlainPolygon."""
         return Polygon(self())
     
-    def inflate(self, margin:float,  method:Union[JOIN_STYLE, str]=JOIN_STYLE.mitre) -> 'PlainPolygon':
+    def inflate(self, margin:float,  method:Union[JOIN_STYLE, str]=JOIN_STYLE.mitre) -> 'PlainPolygon': # type: ignore
         """[shapely] Return a new inflated polygon.
         If the margin is negative, the polygon will be deflated."""
         if isinstance(method, str):
@@ -143,13 +146,13 @@ class PlainEllipse(PlainGeometry):
         contains_point: check if the ellipse contains the point
     """
     center: PlainPoint
-    radii: Tuple[float, float]
+    radii: tuple[float, float]
     angle: float
 
-    def __call__(self) -> Tuple[tuple, tuple, float]:
+    def __call__(self) -> tuple[tuple, tuple, float]:
         return (self.center(), self.radii, self.angle)
     
-    def inflate(self, margin:float) -> 'PlainEllipse':
+    def inflate(self, margin:float) -> 'PlainEllipse': # type: ignore
         return PlainEllipse(self.center, (self.radii[0]+margin, self.radii[1]+margin), self.angle)
     
     def distance_to_point(self, point: PlainPoint) -> float:
@@ -178,11 +181,11 @@ class PlainEllipse(PlainGeometry):
         x, y = self.center()
         rx, ry = self.radii
         a = self.angle
-        ellipse_samples = [(rx*math.cos(2*math.pi*i/n), ry*math.sin(2*math.pi*i/n)) for i in range(n)]
+        ellipse_samples_raw = [(rx*math.cos(2*math.pi*i/n), ry*math.sin(2*math.pi*i/n)) for i in range(n)]
         rotation_matrix = [[math.cos(a), -math.sin(a)], 
                            [math.sin(a), math.cos(a)]]
         ellipse_samples = [PlainPoint(x + rotation_matrix[0][0]*sample[0] + rotation_matrix[0][1]*sample[1], 
-                                      y + rotation_matrix[1][0]*sample[0] + rotation_matrix[1][1]*sample[1]) for sample in ellipse_samples]
+                                      y + rotation_matrix[1][0]*sample[0] + rotation_matrix[1][1]*sample[1]) for sample in ellipse_samples_raw]
         return PlainPolygon(ellipse_samples)
     
     def plot(self, ax: Axes, **kwargs) -> None:
@@ -201,10 +204,10 @@ class PlainCircle(PlainGeometry):
     center: PlainPoint
     radius: float
 
-    def __call__(self) -> Tuple[tuple, float]:
+    def __call__(self) -> tuple[tuple, float]:
         return (self.center(), self.radius)
 
-    def inflate(self, margin:float) -> 'PlainCircle':
+    def inflate(self, margin:float) -> 'PlainCircle': # type: ignore
         return PlainCircle(self.center, self.radius+margin)
     
     def distance_to_point(self, point: PlainPoint) -> float:
@@ -239,11 +242,11 @@ class PlainCircle(PlainGeometry):
 
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt # type: ignore
 
-    list_of_points = [(1,2), (1,1), (1,0), (0,1)]
+    list_of_points_raw = [(1,2), (1,1), (1,0), (0,1)]
 
-    list_of_points = [PlainPoint(*v) for v in list_of_points]
+    list_of_points = [PlainPoint(*v) for v in list_of_points_raw]
     polygon = PlainPolygon(list_of_points)
     polygon_inflated = polygon.inflate(0.1, 'mitre')
 

@@ -1,14 +1,15 @@
+from typing import Any, Optional
+
 import numpy as np
 
 from basic_motion_model.motion_model import MotionModel
 from configs import CircularRobotSpecification, MpcConfiguration
 
 # Type hinting
-from interfaces.interface_mpc_tracker import MpcInterface
-from interfaces.interface_motion_plan import MotionPlanInterface
+from pkg_mpc_tracker.trajectory_tracker import TrajectoryTracker
+from pkg_motion_plan.local_traj_plan import LocalTrajPlanner
 from visualizer.object import ObjectVisualizer
 
-from typing import Any
 
 MAX_NUMBER_OF_ROBOTS = 10
 
@@ -17,13 +18,13 @@ class Robot:
 
     _id_list = [-1]
 
-    def __init__(self, config: CircularRobotSpecification, motion_model: MotionModel, id_:int=None, name:str=None) -> None:
+    def __init__(self, config: CircularRobotSpecification, motion_model: MotionModel, id_:Optional[int]=None, name:Optional[str]=None) -> None:
         self.config = config
         self.motion_model = motion_model
         self._check_identifier(id_, name)
         self._priority = 0
 
-    def _check_identifier(self, id_: int, name: str) -> None:
+    def _check_identifier(self, id_: Optional[int], name: Optional[str]) -> None:
         if id_ is None:
             if max(self._id_list) > MAX_NUMBER_OF_ROBOTS:
                 raise ValueError('Maximum number of robots reached.')
@@ -65,7 +66,7 @@ class Robot:
 
 class RobotUnit():
     """A robot unit is a dictionary-like object that contains a robot, a controller, a visualizer, and a reference path."""
-    def __init__(self, robot: Robot, controller: MpcInterface, planner: MotionPlanInterface, visualizer: ObjectVisualizer) -> None:
+    def __init__(self, robot: Robot, controller: TrajectoryTracker, planner: LocalTrajPlanner, visualizer: ObjectVisualizer) -> None:
         self.robot = robot
         self.controller = controller
         self.planner = planner
@@ -85,44 +86,47 @@ class RobotUnit():
 
 class RobotManager():
     """Manager for robots.
-    Tow ways to access a robot unit (containing a robot and other attributes):
+
+    Notes:
+        To access a robot unit (containing a robot and other attributes):
     - `robot_manager(robot_id).XX`: return a component XX
     - `robot_manager.get_XX(robot_id)`: return XX
     """
 
-    ROBOT_ID_LIST = []
+    ROBOT_ID_LIST:list[int] = []
 
     def __init__(self) -> None:
         self._robot_dict:dict[Any, RobotUnit] = {}
-
-    def _check_id(f): # decorator to check if robot_id exists
+    
+    def __call__(self, robot_id) -> RobotUnit:
+        return self._robot_dict[robot_id]
+    
+    @staticmethod
+    def _check_id(f): 
+        """Decorator to check if robot_id exists"""
         def wrapper(self, robot_id, *args, **kwargs):
             if robot_id not in RobotManager.ROBOT_ID_LIST:
                 raise ValueError(f'Robot {robot_id} does not exist!')
             return f(self, robot_id, *args, **kwargs)
         return wrapper
     
-    def __call__(self, robot_id) -> RobotUnit:
-        return self._robot_dict[robot_id]
-    
     ### Basic operations
-    def create_robot(self, config: CircularRobotSpecification, motion_model: MotionModel, id_:int=None, name:str=None) -> Robot:
+    def create_robot(self, config: CircularRobotSpecification, motion_model: MotionModel, id_:Optional[int]=None, name:Optional[str]=None) -> Robot:
         robot = Robot(config, motion_model, id_, name)
         return robot
 
-    def add_robot(self, robot: Robot, controller: MpcInterface, planner: MotionPlanInterface, visualizer: ObjectVisualizer) -> None:
+    def add_robot(self, robot: Robot, controller: TrajectoryTracker, planner: LocalTrajPlanner, visualizer: ObjectVisualizer) -> None:
         if robot.id_ in self.ROBOT_ID_LIST:
             raise ValueError(f'Robot {robot.id_} exists! Cannot add it again.')
         self._robot_dict[robot.id_] = RobotUnit(robot, controller, planner, visualizer)
         self.ROBOT_ID_LIST.append(robot.id_)
 
     @_check_id
-    def add_schedule(self, robot_id, current_state: np.ndarray, schedule_tuple: tuple):
+    def add_schedule(self, robot_id, current_state: np.ndarray, scheduled_path_coords: list[tuple[float, float]], scheduled_path_times: Optional[list[float]]=None):
         """Add a schedule for a robot in the manager.
 
         Arguments:
             robot_id: robot id
-            schedule_tuple: a tuple of (path_nodes, path_times, whole_path)
 
         Notes:
             The start, goal states and idle flags are set.
@@ -131,17 +135,15 @@ class RobotManager():
             raise ValueError(f'[{self.__class__.__name__}] Robot {robot_id} does not exist!')
         if self.get_robot_idle(robot_id) is False:
             raise ValueError(f'[{self.__class__.__name__}] Robot {robot_id} is not idle!')
-        path_nodes, _, _ = schedule_tuple
         
         planner = self.get_planner(robot_id)
-        planner.set_schedule(*schedule_tuple)
+        planner.load_path(scheduled_path_coords, scheduled_path_times, nomial_speed=self.get_robot(robot_id).config.lin_vel_max, method="linear")
 
-        graph = planner.current_graph
         # start_coord = graph.get_node_coord(path_nodes[0])
         # start_coord_next = graph.get_node_coord(path_nodes[1])
         # start_heading = np.arctan2(start_coord_next[1]-start_coord[1], start_coord_next[0]-start_coord[0])
-        goal_coord = graph.get_node_coord(path_nodes[-1])
-        goal_coord_prev = graph.get_node_coord(path_nodes[-2])
+        goal_coord = scheduled_path_coords[-1]
+        goal_coord_prev = scheduled_path_coords[-2]
         goal_heading = np.arctan2(goal_coord[1]-goal_coord_prev[1], goal_coord[0]-goal_coord_prev[0])
         goal_state = np.array([*goal_coord, goal_heading])
 
@@ -151,7 +153,6 @@ class RobotManager():
 
         controller = self.get_controller(robot_id)
         controller.load_init_states(current_state, goal_state)
-        controller.load_static_obstacles(planner.current_map()[1])
 
     @_check_id
     def remove_robot(self, robot_id) -> None:
@@ -180,47 +181,47 @@ class RobotManager():
 
     ### Get/set robot attributes
     def get_robot(self, robot_id) -> Robot:
-        return self.get_robot_unit(robot_id)['robot']
+        return self.get_robot_unit(robot_id).robot
     
     def get_start_state(self, robot_id) -> np.ndarray:
-        return self.get_robot_unit(robot_id)['start']
+        return self.get_robot_unit(robot_id).start
     
     def set_start_state(self, robot_id, state: np.ndarray) -> None:
         self.set_robot_unit(robot_id, start=state)
     
     def get_goal_state(self, robot_id) -> np.ndarray:
-        return self.get_robot_unit(robot_id)['goal']
+        return self.get_robot_unit(robot_id).goal
     
     def set_goal_state(self, robot_id, state: np.ndarray) -> None:
         self.set_robot_unit(robot_id, goal=state)
     
     def get_robot_idle(self, robot_id) -> bool:
-        return self.get_robot_unit(robot_id)['idle']
+        return self.get_robot_unit(robot_id).idle
     
     def set_robot_idle(self, robot_id, idle: bool) -> None:
         self.set_robot_unit(robot_id, idle=idle)
 
     def get_pred_states(self, robot_id) -> np.ndarray:
-        return self.get_robot_unit(robot_id)['pred_states']
+        return self.get_robot_unit(robot_id).pred_states
     
     def set_pred_states(self, robot_id, pred_states: np.ndarray) -> None:
         self.set_robot_unit(robot_id, pred_states=pred_states)
 
     ### Check controller, planner, and visualizer
-    def get_controller(self, robot_id) -> MpcInterface:
-        return self.get_robot_unit(robot_id)['controller']
+    def get_controller(self, robot_id) -> TrajectoryTracker:
+        return self.get_robot_unit(robot_id).controller
     
     def set_controller(self, robot_id, controller) -> None:
         self.set_robot_unit(robot_id, controller=controller)
 
-    def get_planner(self, robot_id) -> MotionPlanInterface:
-        return self.get_robot_unit(robot_id)['planner']
+    def get_planner(self, robot_id) -> LocalTrajPlanner:
+        return self.get_robot_unit(robot_id).planner
     
-    def set_planner(self, robot_id, planner: MotionPlanInterface) -> None:
+    def set_planner(self, robot_id, planner: LocalTrajPlanner) -> None:
         self.set_robot_unit(robot_id, planner=planner)
     
-    def get_visualizer(self, robot_id) -> ObjectVisualizer:
-        return self.get_robot_unit(robot_id)['visualizer']
+    def get_visualizer(self, robot_id):
+        return self.get_robot_unit(robot_id).visualizer
     
     def set_visualizer(self, robot_id, visualizer) -> None:
         self.set_robot_unit(robot_id, visualizer=visualizer)
@@ -253,3 +254,4 @@ class RobotManager():
                     other_robot_states[idx_pred : idx_pred+state_dim*horizon] = list(pred_states.reshape(-1))
                     idx_pred += state_dim*horizon
         return other_robot_states
+    
