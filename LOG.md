@@ -8,9 +8,13 @@ The previous history is not recorded. This project is reinitialized today and sh
 
 # 20231031
 The basic_map package is reconstructed to remove the dependency on the basic_obstacle package. Maps are exported to json files.
-- [x] [PASS] test_map_and_graph
+- [x] ~~test_map_and_graph~~
 
 The basic_obstacle package is cleaned up (remove separate shapely geometry, merge into plain geometry).
 MotionPlanInterface now has a current map and an inflated map.
 
 The code is uploaded to GitHub.
+
+# 20240112
+The code is simplified by getting rid of interfaces.
+- [] Merge the code with the design project.
