@@ -25,4 +25,4 @@ if __name__ == "__main__":
     config_mpc = load_mpc_config(cfg_fname)
     config_robot = load_robot_spec(robot_spec)
     mpc_module = panoc_builder.PanocBuilder(config_mpc, config_robot)
-    mpc_module.build(motion_model.unicycle_model)
+    mpc_module.build(motion_model.unicycle_model, test=False)

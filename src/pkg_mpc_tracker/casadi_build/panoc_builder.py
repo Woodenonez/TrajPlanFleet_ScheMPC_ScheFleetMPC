@@ -1,4 +1,4 @@
-from typing import Union, List, Callable
+from typing import Callable
 
 import casadi.casadi as cs # type: ignore
 from opengen import opengen as og # type: ignore # or "import opengen as og"
@@ -42,15 +42,17 @@ class PanocBuilder:
         print(f'[{self.__class__.__name__}] Building MPC module...')
 
         u = cs.SX.sym('u', self.nu*self.N_hor)  # 0. Inputs from 0 to N_hor-1
-
         u_m1 = cs.SX.sym('u_m1', self.nu)       # 1. Input at kt=-1
         s_0 = cs.SX.sym('s_0', self.ns)         # 2. State at kt=0
         s_N = cs.SX.sym('s_N', self.ns)         # 3. State of goal at kt=N_hor
-        q = cs.SX.sym('q', self.config.nq)      # 4. Penalty parameters for objective terms
+        q = cs.SX.sym('q', self.config.nq)      # 4. Penalty for terms related to states/inputs
+
         r_s = cs.SX.sym('r_s', self.ns*self.N_hor)  # 5. Reference states
         r_v = cs.SX.sym('r_v', self.N_hor)          # 6. Reference speed
+
         c_0 = cs.SX.sym('c_0', self.ns*self.config.Nother)          # 7. States of other robots at kt=0
         c = cs.SX.sym('c', self.ns*self.N_hor*self.config.Nother)   # 8. Predicted states of other robots
+
         o_s = cs.SX.sym('os', self.config.Nstcobs*self.config.nstcobs)                  # 9. Static obstacles
         o_d = cs.SX.sym('od', self.config.Ndynobs*self.config.ndynobs*(self.N_hor+1))   # 10. Dynamic obstacles
         q_stc = cs.SX.sym('qstc', self.N_hor)               # 11. Static obstacle weights
@@ -64,8 +66,8 @@ class PanocBuilder:
         (qpos, qvel, qtheta, rv, rw)                    = (q[0], q[1], q[2], q[3], q[4])
         (qN, qthetaN, qrpd, acc_penalty, w_acc_penalty) = (q[5], q[6], q[7], q[8], q[9])
         
-        ref_states = cs.reshape(r_s, (self.ns, self.N_hor)).T
-        ref_states = cs.vertcat(ref_states, ref_states[[-1],:])[:, :2]
+        ref_states = cs.reshape(r_s, (self.ns, self.N_hor)) # each column is a state
+        ref_states = cs.horzcat(ref_states, ref_states[:,[-1]])[:2, :]
 
         cost = 0
         penalty_constraints = 0
@@ -73,28 +75,26 @@ class PanocBuilder:
         for kt in range(0, self.N_hor): # LOOP OVER PREDICTIVE HORIZON
             
             ### Run step with motion model
-            u_t = u[kt*self.nu:(kt+1)*self.nu]  # inputs at time t
-            state = motion_model(state, u_t, self.ts) # Kinematic/dynamic model
+            u_t = u[kt*self.nu:(kt+1)*self.nu]
+            state = motion_model(state, u_t, self.ts)
 
             ### Reference deviation costs
-            cost += mpc_cost.cost_refpath_deviation(state.T, ref_states[kt:, :], weight=qrpd)   # [cost] reference path deviation cost
-            cost += mpc_cost.cost_refvalue_deviation(u_t[0], r_v[kt], weight=qvel)              # [cost] refenrence velocity deviation
-            cost += mpc_cost.cost_control_actions(u_t.T, weights=cs.horzcat(rv, rw))            # [cost] penalize control actions
+            cost += mpc_cost.cost_refpath_deviation(state, ref_states[:, kt:], weight=qrpd)   # [cost] reference path deviation
+            cost += qvel * (u_t[0]-r_v[kt])**2                                                # [cost] refenrence velocity deviation
+            cost += cs.sum1(cs.vertcat(rv, rw) * u_t**2)                                      # [cost] penalize control actions
 
             ### Fleet collision avoidance
             other_x_0 = c_0[ ::self.ns] # first  state
             other_y_0 = c_0[1::self.ns] # second state
-            other_robots_0 = cs.hcat([other_x_0, other_y_0]) # states of other robots at time 0
-            other_robots_0 = cs.transpose(other_robots_0) # every column is a state of a robot
-            cost += mpc_cost.cost_fleet_collision(state[:2].T, other_robots_0.T, 
+            other_robots_0 = cs.hcat([other_x_0, other_y_0]).T # every column is a state of a robot
+            cost += mpc_cost.cost_fleet_collision(state[:2], other_robots_0, 
                                                   safe_distance=2*(self.robot_config.vehicle_width+self.robot_config.vehicle_margin), weight=1000)
 
             ### Fleet collision avoidance [Predictive]
             other_robots_x = c[kt*self.ns  ::self.ns*self.N_hor] # first  state
             other_robots_y = c[kt*self.ns+1::self.ns*self.N_hor] # second state
-            other_robots = cs.hcat([other_robots_x, other_robots_y]) # states of other robots at time kt (Nother*ns)
-            other_robots = cs.transpose(other_robots) # every column is a state of a robot
-            cost += mpc_cost.cost_fleet_collision(state[:2].T, other_robots.T, 
+            other_robots = cs.hcat([other_robots_x, other_robots_y]).T # every column is a state of a robot
+            cost += mpc_cost.cost_fleet_collision(state[:2], other_robots, 
                                                   safe_distance=2*(self.robot_config.vehicle_width+self.robot_config.vehicle_margin), weight=10)
 
             ### Static obstacles
@@ -103,10 +103,10 @@ class PanocBuilder:
                 n_edges = int(self.config.nstcobs / 3) # 3 means b, a0, a1
                 b, a0, a1 = eq_param[:n_edges], eq_param[n_edges:2*n_edges], eq_param[2*n_edges:]
 
-                inside_stc_obstacle = mpc_helper.inside_cvx_polygon(state.T, b.T, a0.T, a1.T)
+                inside_stc_obstacle = mpc_helper.inside_cvx_polygon(state, b.T, a0.T, a1.T)
                 penalty_constraints += cs.fmax(0, cs.vertcat(inside_stc_obstacle))
 
-                cost += mpc_cost.cost_inside_cvx_polygon(state.T, b.T, a0.T, a1.T, weight=q_stc[kt])
+                cost += mpc_cost.cost_inside_cvx_polygon(state, b.T, a0.T, a1.T, weight=q_stc[kt])
 
             ### Dynamic obstacles
             # x_dyn     = o_d[0::self.config.ndynobs*(self.N_hor+1)]
@@ -204,4 +204,6 @@ class PanocBuilder:
             builder.build()
 
         print(f'[{self.__class__.__name__}] MPC module built.')
+
+
 
