@@ -52,7 +52,7 @@ static_obstacles = gpc.inflated_map.obstacle_coords_list
 robot_manager = RobotManager()
 for rid in robot_ids:
     robot = robot_manager.create_robot(config_robot, UnicycleModel(sampling_time=config_mpc.ts), rid)
-    robot.set_state(np.asarray(robot_starts[rid]))
+    robot.set_state(np.asarray(robot_starts[str(rid)]))
     # planner = MotionPlanInterface(rid, config_mpc, config_robot, verbose=VB)
     planner = LocalTrajPlanner(config_mpc.ts, config_mpc.N_hor, config_robot.lin_vel_max, verbose=VB)
     planner.load_map(gpc.inflated_map.boundary_coords, gpc.inflated_map.obstacle_coords_list)
@@ -62,7 +62,7 @@ for rid in robot_ids:
     robot_manager.add_robot(robot, controller, planner, visualizer)
 
     path_coords, path_times = gpc.get_robot_schedule(rid)
-    robot_manager.add_schedule(rid, np.asarray(robot_starts[rid]), path_coords, path_times)
+    robot_manager.add_schedule(rid, np.asarray(robot_starts[str(rid)]), path_coords, path_times)
 
 ### Run
 main_plotter = MpcPlotInLoop(config_robot)

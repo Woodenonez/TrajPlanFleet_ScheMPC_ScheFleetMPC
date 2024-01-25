@@ -171,11 +171,10 @@ class LocalTrajPlanner:
 
         Returns:
             ref_states: The local state reference.
-            ref_speed: The reference speed.
+            ref_speed: The reference speed. If not reference time, this is None.
             done: If the current node is the last node in the reference path, return True. Otherwise, return False.
         """
         assert self._ref_path is not None
-        assert self._ref_path_time is not None
         assert self._base_traj is not None
         assert self._base_traj_target_node is not None
         assert self._base_traj_docking_idx is not None
@@ -188,9 +187,12 @@ class LocalTrajPlanner:
         distances = [math.hypot(current_pos[0]-x[0], current_pos[1]-x[1]) for x in self._base_traj[lb_idx:ub_idx]]
         self._base_traj_docking_idx = lb_idx + distances.index(min(distances))
 
-        distance_to_current_node = math.hypot(current_pos[0]-self._current_target_node[0], current_pos[1]-self._current_target_node[1])
-        timediff_to_current_node = max(self._ref_path_time[self._current_target_node_idx] - current_time, 0) + 1e-6
-        ref_speed = min(distance_to_current_node/timediff_to_current_node, self.v_max)
+        if self._ref_path_time is not None:
+            distance_to_current_node = math.hypot(current_pos[0]-self._current_target_node[0], current_pos[1]-self._current_target_node[1])
+            timediff_to_current_node = max(self._ref_path_time[self._current_target_node_idx] - current_time, 0) + 1e-6
+            ref_speed = min(distance_to_current_node/timediff_to_current_node, self.v_max)
+        else:
+            ref_speed = None
 
         if (self._base_traj_docking_idx+self.N_hor >= len(self._base_traj)): # if horizon exceeds the base trajectory
             ref_states = np.array(self._base_traj[self._base_traj_docking_idx:] + [self._base_traj[-1]]*(self.N_hor-(len(self._base_traj)-self._base_traj_docking_idx)))
@@ -218,7 +220,6 @@ class LocalTrajPlanner:
             The time sampling will keep forwarding the docking point until the current time is larger than the reference time.
         """
         assert self._ref_path is not None
-        assert self._ref_path_time is not None
         assert self._base_traj is not None
         assert self._base_traj_time is not None
         assert self._base_traj_target_node is not None
