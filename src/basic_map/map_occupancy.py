@@ -1,10 +1,11 @@
 import numpy as np
-from skimage.color import rgb2gray # to gray image
+from PIL import Image # type: ignore
+from matplotlib.axes import Axes # type: ignore
 
 from .map_tools import blob_bounding
 
-from typing import List, Tuple
-from matplotlib.axes import Axes
+
+PathNode = tuple[float, float]
 
 
 class OccupancyMap:
@@ -15,7 +16,7 @@ class OccupancyMap:
         self._height = map_image.shape[0]
 
         self.__background = map_image
-        self.__grayground = rgb2gray(map_image) if map_image.shape[2]==3 else map_image[:,:,0]
+        self.__grayground = np.array(Image.fromarray(map_image).convert('L')) if map_image.shape[2]==3 else map_image[:,:,0]
         self.__binyground = (self.__grayground>occupancy_threshold)
 
     @property
@@ -45,9 +46,18 @@ class OccupancyMap:
         if gray_scale:
             return self.__grayground
         return self.__background
+    
+    @classmethod
+    def from_image(cls, map_file_path: str):
+        img = Image.open(map_file_path)
+        map_data = np.array(img.convert('L'))
+        return cls(map_data)
 
-    def get_geometric_map(self, bounding_degree=4) -> Tuple[List[tuple], List[List[tuple]]]:
-        boundary_coords = [(0,0), (0,self.height), (self.width, self.height), (self.width, 0)]
+    def get_geometric_map(self, bounding_degree=4) -> tuple[list[PathNode], list[list[PathNode]]]:
+        boundary_coords = [(0.0, 0.0), 
+                           (0.0, float(self.height)), 
+                           (float(self.width), float(self.height)), 
+                           (float(self.width), 0.0)]
         obstacle_list = []
         blob_detector = blob_bounding.BlobBounding(bounding_degree)
         obstacle_list = blob_detector.get_bounding_polygons(self.__grayground)
@@ -69,19 +79,16 @@ class OccupancyMap:
                     continue
         obstacle_list = [x.tolist() for x in obstacle_list]
         
-        return boundary_coords, obstacle_list
+        return boundary_coords, obstacle_list # type: ignore
 
     def plot(self, ax: Axes, binary_scale=False, gray_scale=True, **kwargs):
         ax.imshow(self(binary_scale, gray_scale), **kwargs)
 
 
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
-    from skimage import io
+    import matplotlib.pyplot as plt # type: ignore
 
-    # XXX NOT WORKING due to relative import
-    map_image = io.imread('map.png')
-    occupancy_map = OccupancyMap(map_image)
+    occupancy_map = OccupancyMap.from_image('map.png')
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     occupancy_map.plot(ax, cmap='gray')

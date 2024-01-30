@@ -1,11 +1,10 @@
 import json
 import math
 import random
-
-import networkx as nx
-
-from matplotlib.axes import Axes
 from typing import List, Dict, Any
+
+import networkx as nx # type: ignore
+from matplotlib.axes import Axes # type: ignore
 
 
 class NetGraph(nx.Graph):
