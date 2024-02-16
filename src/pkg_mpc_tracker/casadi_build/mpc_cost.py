@@ -1,11 +1,53 @@
+from dataclasses import dataclass
 from typing import Union
 
-import casadi.casadi as cs # type: ignore
+import casadi as ca # type: ignore
 
 from .mpc_helper import *
 
 
-def cost_inside_cvx_polygon(state: cs.SX, b: cs.SX, a0: cs.SX, a1: cs.SX, weight:Union[cs.SX, float]=1.0):
+@dataclass
+class CostTerms:
+    cost_rpd: ca.SX
+    cost_rvd: ca.SX
+    cost_input: ca.SX
+    cost_fleet: ca.SX
+    cost_fleet_pred: ca.SX
+    cost_stcobs: ca.SX
+    cost_dynobs: ca.SX
+    cost_dynobs_pred: ca.SX
+
+    def __add__(self, other: "CostTerms") -> "CostTerms":
+        return CostTerms(
+            cost_rpd=self.cost_rpd+other.cost_rpd,
+            cost_rvd=self.cost_rvd+other.cost_rvd,
+            cost_input=self.cost_input+other.cost_input,
+            cost_fleet=self.cost_fleet+other.cost_fleet,
+            cost_fleet_pred=self.cost_fleet_pred+other.cost_fleet_pred,
+            cost_stcobs=self.cost_stcobs+other.cost_stcobs,
+            cost_dynobs=self.cost_dynobs+other.cost_dynobs,
+            cost_dynobs_pred=self.cost_dynobs_pred+other.cost_dynobs_pred
+        )
+    
+    @classmethod
+    def zero(cls) -> "CostTerms":
+        """Return a zero cost terms.
+        """
+        return cls(
+            cost_rpd=0.0, cost_rvd=0.0, cost_input=0.0,
+            cost_fleet=0.0, cost_fleet_pred=0.0,
+            cost_stcobs=0.0, cost_dynobs=0.0, cost_dynobs_pred=0.0
+        )
+    
+    def sum(self) -> ca.SX:
+        return self.cost_rpd + self.cost_rvd + self.cost_input + self.cost_fleet + self.cost_fleet_pred + self.cost_stcobs + self.cost_dynobs + self.cost_dynobs_pred
+
+    def sum_values(self) -> float:
+        return (float(self.cost_rpd) + float(self.cost_rvd) + float(self.cost_input) + float(self.cost_fleet) + 
+                float(self.cost_fleet_pred) + float(self.cost_stcobs) + float(self.cost_dynobs) + float(self.cost_dynobs_pred))
+
+
+def cost_inside_cvx_polygon(state: ca.SX, b: ca.SX, a0: ca.SX, a1: ca.SX, weight:Union[ca.SX, float]=1.0) -> ca.SX:
     """Cost (weighted squared) for being inside a convex polygon defined by `b - [a0,a1]*[x,y]' > 0`.
         
     Args:
@@ -22,10 +64,11 @@ def cost_inside_cvx_polygon(state: cs.SX, b: cs.SX, a0: cs.SX, a1: cs.SX, weight
         If prod(|max(0,all)|)>0, then the point is inside; Otherwise not.
     """
     indicator = inside_cvx_polygon(state, b, a0, a1)
-    cost = weight * indicator**2
+    cost:ca.SX = weight * indicator**2
+    assert cost.shape == (1,1)
     return cost
 
-def cost_inside_ellipses(state: cs.SX, ellipse_param: list[cs.SX], weight:Union[cs.SX, float]=1.0):
+def cost_inside_ellipses(state: ca.SX, ellipse_param: list[ca.SX], weight:Union[ca.SX, float]=1.0) -> ca.SX:
     """Cost (weighted squared) for being inside a set of ellipses defined by `(cx, cy, sx, sy, angle, alpha)`.
     
     Args:
@@ -41,11 +84,12 @@ def cost_inside_ellipses(state: cs.SX, ellipse_param: list[cs.SX], weight:Union[
     else:
         alpha = 1
     indicator = inside_ellipses(state, ellipse_param) # indicator<0, if outside ellipse
-    indicator = weight * alpha * cs.fmax(0.0, indicator)**2
-    cost = cs.sum2(indicator)
+    indicator = weight * alpha * ca.fmax(0.0, indicator)**2
+    cost:ca.SX = ca.sum1(ca.sum2(indicator))
+    assert cost.shape == (1,1)
     return cost
 
-def cost_fleet_collision(state: cs.SX, points: cs.SX, safe_distance: float, weight:Union[cs.SX, float]=1.0):
+def cost_fleet_collision(state: ca.SX, points: ca.SX, safe_distance: float, weight:Union[ca.SX, float]=1.0) -> ca.SX:
     """Cost (weighted squared) for colliding with other robots.
     
     Args:
@@ -55,10 +99,11 @@ def cost_fleet_collision(state: cs.SX, points: cs.SX, safe_distance: float, weig
     Notes:
         Only have cost when the distance is smaller than `safe_distance`.
     """
-    cost = weight * cs.sum2(cs.fmax(0.0, safe_distance**2 - dist_to_points_square(state, points)))
+    cost:ca.SX = weight * ca.sum2(ca.fmax(0.0, safe_distance**2 - dist_to_points_square(state, points)))
+    assert cost.shape == (1,1)
     return cost
 
-def cost_refpath_deviation(state: cs.SX, line_segments: cs.SX, weight:Union[cs.SX, float]=1.0):
+def cost_refpath_deviation(state: ca.SX, line_segments: ca.SX, weight:Union[ca.SX, float]=1.0) -> ca.SX:
     """Reference deviation cost (weighted squared) penalizes on the deviation from the reference path.
 
     Args:
@@ -68,11 +113,12 @@ def cost_refpath_deviation(state: cs.SX, line_segments: cs.SX, weight:Union[cs.S
     Returns:
         The weighted squared distance to the reference path.
     """
-    distances_sqrt = cs.SX.ones(1)
+    distances_sqrt = ca.SX.ones(1)
     for i in range(line_segments.shape[0]-1):
         distance = dist_to_lineseg(state[:2], line_segments[i:i+2,:2])
-        distances_sqrt = cs.horzcat(distances_sqrt, distance**2)
-    cost = cs.mmin(distances_sqrt[1:]) * weight
+        distances_sqrt = ca.horzcat(distances_sqrt, distance**2)
+    cost:ca.SX = ca.mmin(distances_sqrt[1:]) * weight
+    assert cost.shape == (1,1)
     return cost
 
 

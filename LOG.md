@@ -17,7 +17,11 @@ The code is uploaded to GitHub.
 
 # 20240112
 The code is simplified by getting rid of interfaces.
-- [] Merge the code with the design project.
+- ~~[Abort] Merge the code with the design project.~~
 
 # 20240125
 Modify the linear sampling method in the local planner so that the reference time/speed can be None.
+
+# 20240216
+Add cost monitor and improve the interfaces of the controller and so on.
+Return MPC parameters according to the cost monitor report.

@@ -2,7 +2,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from basic_motion_model.motion_model import MotionModel
+from basic_motion_model import motion_model as momo
 from configs import CircularRobotSpecification, MpcConfiguration
 
 # Type hinting
@@ -18,7 +18,7 @@ class Robot:
 
     _id_list = [-1]
 
-    def __init__(self, config: CircularRobotSpecification, motion_model: MotionModel, id_:Optional[int]=None, name:Optional[str]=None) -> None:
+    def __init__(self, config: CircularRobotSpecification, motion_model: momo.MotionModel, id_:Optional[int]=None, name:Optional[str]=None) -> None:
         self.config = config
         self.motion_model = motion_model
         self._check_identifier(id_, name)
@@ -111,7 +111,15 @@ class RobotManager():
         return wrapper
     
     ### Basic operations
-    def create_robot(self, config: CircularRobotSpecification, motion_model: MotionModel, id_:Optional[int]=None, name:Optional[str]=None) -> Robot:
+    def create_robot(self, config: CircularRobotSpecification, motion_model: Optional[momo.MotionModel], id_:Optional[int]=None, name:Optional[str]=None) -> Robot:
+        """Create a robot object.
+
+        Notes:
+            Motion model: If not provided, a unicycle model is used.
+            ID and name: It is suggested to provide an ID at least.
+        """
+        if motion_model is None:
+            motion_model = momo.UnicycleModel(sampling_time=config.ts)
         robot = Robot(config, motion_model, id_, name)
         return robot
 

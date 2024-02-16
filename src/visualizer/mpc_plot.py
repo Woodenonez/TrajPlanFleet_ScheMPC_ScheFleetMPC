@@ -115,18 +115,20 @@ class MpcPlotInLoop:
             map_manager: with plot(ax) method.
             graph_manager: with plot(ax) method.
         """
-        [ax.grid('on') for ax in [self.vel_ax, self.omega_ax, self.cost_ax]]
+        [ax.grid(visible=True) for ax in [self.vel_ax, self.omega_ax, self.cost_ax]]
         [ax.set_xlabel('Time [s]') for ax in [self.vel_ax, self.omega_ax, self.cost_ax]]
         self.vel_ax.set_ylabel('Velocity [m/s]')
         self.omega_ax.set_ylabel('Angular velocity [rad/s]')
         self.cost_ax.set_ylabel('Cost')
 
         if inflated_map is not None:
-            inflated_map.plot(self.map_ax, {'c': 'r'})
+            inflated_map.plot(self.map_ax, {'c': 'r'}, obstacle_filled=False)
         original_map.plot(self.map_ax)
         self.map_ax.set_xlabel('X [m]', fontsize=15)
         self.map_ax.set_ylabel('Y [m]', fontsize=15)
         self.map_ax.axis('equal')
+        self.map_ax.tick_params(axis='x', which='both', bottom=True, labelbottom=True)
+        self.map_ax.tick_params(axis='y', which='both', left=True, labelleft=True)
 
         if graph_manager is not None:
             graph_manager.plot(self.map_ax)

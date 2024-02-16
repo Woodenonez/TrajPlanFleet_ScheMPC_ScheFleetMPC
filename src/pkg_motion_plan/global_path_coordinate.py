@@ -8,6 +8,7 @@ from .path_plan_graph import dijkstra
 
 from basic_map.graph import NetGraph
 from basic_map.map_geometric import GeometricMap
+from basic_map.map_occupancy import OccupancyMap
 from basic_obstacle.geometry_plain import PlainPolygon
 
 
@@ -51,6 +52,7 @@ class GlobalPathCoordinator:
             self.robot_schedule_dict[robot_id] = robot_schedule
 
         self._G:Optional[NetGraph] = None
+        self.img_map: Optional[OccupancyMap] = None
 
     @property
     def total_schedule(self) -> pd.DataFrame:
@@ -77,6 +79,12 @@ class GlobalPathCoordinator:
         """Load the total schedule from a csv file."""
         total_schedule = pd.read_csv(csv_path, sep=csv_sep, header=0)
         return cls(total_schedule)
+    
+    @classmethod
+    def from_dict(cls, schedule_dict: dict):
+        """Load the total schedule from a dictionary."""
+        total_schedule = pd.DataFrame(schedule_dict)
+        return cls(total_schedule)
 
 
     def inflate_map(self, original_map: GeometricMap, inflation_margin: float):
@@ -94,17 +102,20 @@ class GlobalPathCoordinator:
     def load_graph_from_json(self, json_path: str):
         self.load_graph(NetGraph.from_json(json_path))
 
-    def load_map(self, boundary_coords: list[PathNode], obstacle_list: list[list[PathNode]], inflation_margin:Optional[float]=None):
-        self._current_map = GeometricMap.from_raw(boundary_coords, obstacle_list)
+    def load_map(self, boundary_coords: list[PathNode], obstacle_list: list[list[PathNode]], rescale:Optional[float]=None, inflation_margin:Optional[float]=None):
+        self._current_map = GeometricMap.from_raw(boundary_coords, obstacle_list, rescale=rescale)
         if inflation_margin is not None:
             self._inflated_map = self.inflate_map(self._current_map, inflation_margin)
         else:
             self._inflated_map = self._current_map
 
-    def load_map_from_json(self, json_path: str, inflation_margin:Optional[float]=None):
-        self._current_map = GeometricMap.from_json(json_path)
+    def load_map_from_json(self, json_path: str, rescale:Optional[float]=None, inflation_margin:Optional[float]=None):
+        self._current_map = GeometricMap.from_json(json_path, rescale=rescale)
         boundary_coords, obstacle_coords_list = self._current_map()
-        self.load_map(boundary_coords, obstacle_coords_list, inflation_margin)
+        self.load_map(boundary_coords, obstacle_coords_list, inflation_margin=inflation_margin)
+
+    def load_img_map(self, img_path: str):
+        self.img_map = OccupancyMap.from_image(img_path)
 
 
     def get_schedule_with_node_index(self, robot_id: int) -> tuple[list, Optional[list[float]], bool]:
@@ -125,6 +136,10 @@ class GlobalPathCoordinator:
         if 'ETA' in schedule.columns:
             path_nodes = schedule['node_id'].tolist()
             path_times = schedule['ETA'].tolist()
+            path_times_0 = path_times[0]
+            if isinstance(path_times_0, str):
+                if path_times_0.lower() == 'none':
+                    path_times = None
             whole_path = True
         elif 'EDT' in schedule.columns:
             path_nodes = [schedule['start_node'].iloc[0], schedule['end_node'].iloc[0]]

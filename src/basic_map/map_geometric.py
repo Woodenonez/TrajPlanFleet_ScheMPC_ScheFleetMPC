@@ -1,5 +1,5 @@
 import json
-from typing import TypedDict, Union
+from typing import TypedDict, Optional, Callable
 
 import numpy as np
 import matplotlib.pyplot as plt # type: ignore
@@ -52,7 +52,7 @@ class GeometricMap:
         return self.boundary_coords, self.obstacle_coords_list
     
     @classmethod
-    def from_json(cls, json_path: str):
+    def from_json(cls, json_path: str, rescale:Optional[float]=None):
         """Load a map from a json file.
 
         Keys (obstacle_dict or obstacle_list):
@@ -68,13 +68,24 @@ class GeometricMap:
         else:
             obstacle_coords_list = data['obstacle_list']
             obstacle_dict_list = [{'id_': i, 'name': f'obstacle_{i}', 'vertices': obs} for i, obs in enumerate(obstacle_coords_list)]
-        return cls(boundary_coords, obstacle_dict_list)
+        if rescale is None:
+            return cls(boundary_coords, obstacle_dict_list)
+        else:
+            boundary_coords_rescaled = [(x[0]*rescale, x[1]*rescale) for x in boundary_coords]
+            obstacle_dict_list_rescaled = [ObstacleInfo(id_=obs['id_'], name=obs['name'], vertices=[(x[0]*rescale, x[1]*rescale) for x in obs['vertices']]) for obs in obstacle_dict_list]
+            return cls(boundary_coords_rescaled, obstacle_dict_list_rescaled)
     
     @classmethod
-    def from_raw(cls, boundary_coords: list[PathNode], obstacle_coords_list: list[list[PathNode]]):
+    def from_raw(cls, boundary_coords: list[PathNode], obstacle_coords_list: list[list[PathNode]], rescale:Optional[float]=None):
         """Load a map from raw data."""
-        obstacle_dict_list = [ObstacleInfo(id_=i, name=f'obstacle_{i}', vertices=obs) for i, obs in enumerate(obstacle_coords_list)]
-        return cls(boundary_coords, obstacle_dict_list)
+        if rescale is None:
+            obstacle_dict_list = [ObstacleInfo(id_=i, name=f'obstacle_{i}', vertices=obs) for i, obs in enumerate(obstacle_coords_list)]
+            return cls(boundary_coords, obstacle_dict_list)
+        else:
+            boundary_coords_rescaled = [(x[0]*rescale, x[1]*rescale) for x in boundary_coords]
+            obstacle_coords_list_rescaled = [[(x[0]*rescale, x[1]*rescale) for x in obs] for obs in obstacle_coords_list]
+            obstacle_dict_list_rescaled = [ObstacleInfo(id_=i, name=f'obstacle_{i}', vertices=obs) for i, obs in enumerate(obstacle_coords_list_rescaled)]
+            return cls(boundary_coords_rescaled, obstacle_dict_list_rescaled)
 
     def get_obstacle_info(self, id_:int) -> ObstacleInfo:
         return self._obstacle_info_dict[id_]
@@ -98,6 +109,12 @@ class GeometricMap:
         if len(vertices[0])!=2:
             raise TypeError('All coordinates must be 2-dimension.')
         self._boundary_coords = vertices
+
+    def map_coords_cvt(self, ct: Callable):
+        self._boundary_coords = [ct(x) for x in self._boundary_coords]
+        for idx in list(self._obstacle_info_dict):
+            obs = self._obstacle_info_dict[idx]
+            obs['vertices'] = [tuple(ct(x)) for x in obs['vertices']] # type: ignore
 
 
     def get_boundary_scope(self) -> tuple[float, float, float, float]:
@@ -134,18 +151,19 @@ class GeometricMap:
             plt.fill(x, y, color='k')
         fig.tight_layout(pad=0)
         fig.canvas.draw()
-        occupancy_map = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        occupancy_map = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8) # type: ignore
         occupancy_map = occupancy_map.reshape(fig.canvas.get_width_height()[::-1] + (3,))
         plt.close()
         return occupancy_map
 
-    def plot(self, ax: Axes, original_plot_args:dict={'c':'k'}):
-        ax.plot(np.array(self._boundary_coords+[self._boundary_coords[0]])[:,0], 
-                np.array(self._boundary_coords+[self._boundary_coords[0]])[:,1], 
-                **original_plot_args)
+    def plot(self, ax: Axes, original_plot_args:dict={'c':'k'}, obstacle_filled=True, plot_boundary:bool=True):
+        if plot_boundary:
+            ax.plot(np.array(self._boundary_coords+[self._boundary_coords[0]])[:,0], 
+                    np.array(self._boundary_coords+[self._boundary_coords[0]])[:,1], 
+                    **original_plot_args)
         for obs in self.obstacle_coords_list:
             ax.fill(np.array(obs)[:,0], np.array(obs)[:,1], 
-                    fill=True, **original_plot_args)
+                    fill=obstacle_filled, **original_plot_args)
 
     @staticmethod
     def dict_to_obstacle_info(obstacle_dict: dict) -> ObstacleInfo:

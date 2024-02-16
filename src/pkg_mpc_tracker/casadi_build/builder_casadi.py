@@ -1,5 +1,5 @@
 
-from typing import Callable, List, Tuple, Union
+from typing import Callable
 
 import numpy as np
 import casadi as cs # type: ignore
@@ -7,7 +7,7 @@ import casadi as cs # type: ignore
 from . import mpc_helper
 from . import mpc_cost
 
-from basic_casadi_solver.direct_multiple_shooting import MultipleShootingSolver
+from basic_casadi.direct_multiple_shooting import MultipleShootingSolver
 from configs import MpcConfiguration, CircularRobotSpecification
 
 

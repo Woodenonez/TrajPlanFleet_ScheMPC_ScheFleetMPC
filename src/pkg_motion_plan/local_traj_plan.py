@@ -156,7 +156,7 @@ class LocalTrajPlanner:
             ref_states, ref_speed, done = self.get_local_ref_from_linear_sampling(current_time, current_pos, idx_check_range)
         else:
             raise ValueError('Sampling method not supported.')
-        if ref_speed > 1e-6:
+        if (ref_speed is not None) and (ref_speed > 1e-6):
             ref_states = self.downsample_ref_states(ref_states, self.traj_gen.speed, ref_speed)
         if done:
             self._idle = True

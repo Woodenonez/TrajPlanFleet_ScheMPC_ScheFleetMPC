@@ -2,13 +2,16 @@
 import os
 import sys
 import math
+import warnings
 import itertools
-from typing import Callable, List, Optional
+from timeit import default_timer as timer
+from typing import Callable, Optional, TypedDict
 # External import
 import numpy as np
 from scipy.spatial import ConvexHull # type: ignore
 # Custom import 
 from configs import MpcConfiguration, CircularRobotSpecification
+from .cost_monitor import CostMonitor, MonitoredCost
 
 
 PathNode = tuple[float, float]
@@ -17,6 +20,13 @@ PathNode = tuple[float, float]
 class Solver(): # this is not found in the .so file (in ternimal: nm -D  navi_test.so)
     import opengen as og # type: ignore
     def run(self, p: list, initial_guess=None, initial_lagrange_multipliers=None, initial_penalty=None) -> og.opengen.tcp.solver_status.SolverStatus: pass
+
+
+class DebugInfo(TypedDict):
+    cost: float
+    closest_obstacle_list: list[list[PathNode]]
+    step_runtime: float
+    monitored_cost: Optional[MonitoredCost]
 
 
 class TrajectoryTracker:
@@ -77,6 +87,11 @@ class TrajectoryTracker:
         self._map_loaded = False
         self._obstacle_weights()
         self.set_work_mode(mode='safe')
+
+        # Monitor
+        self.monitor_on = False
+        self.cost_monitor = CostMonitor(self.config, self.robot_spec, verbose)
+        self.cost_monitor.init_params()
 
         if self.config.solver_type == 'PANOC':
             self.__import_solver(use_tcp=use_tcp)
@@ -174,9 +189,11 @@ class TrajectoryTracker:
             motion_model: The motion model of the robot, should be a Callable object.
 
         Notes:
-            The motion model should be `s'=f(s,a,ts)` (takes in a state and an action and returns the next state).
+            Form: The motion model should be `s'=f(s,a,ts)` (takes in a state and an action and returns the next state).
+            Model: The motion model should be the same as the builder's motion model.
         """
         self.motion_model = motion_model
+        self.cost_monitor.load_motion_model(motion_model)
 
     def load_init_states(self, current_state: np.ndarray, goal_state: np.ndarray):
         """Load the initial state and goal state.
@@ -194,7 +211,7 @@ class TrajectoryTracker:
             past_states: List of past states of the robot.
             past_actions: List of past actions of the robot.
             cost_timelist: List of cost values of the robot.
-            solver_time_timelist: List of solver time of the robot.
+            solver_time_timelist: List of solver time [ms] of the robot.
             finishing: If the robot is approaching the final goal.
 
         Notes:
@@ -206,10 +223,10 @@ class TrajectoryTracker:
         self.state = current_state
         self.final_goal = goal_state
 
-        self.past_states: List[np.ndarray] = []
-        self.past_actions: List[np.ndarray] = []
-        self.cost_timelist: List[float] = []
-        self.solver_time_timelist: List[float] = []
+        self.past_states: list[np.ndarray] = [current_state]
+        self.past_actions: list[np.ndarray] = []
+        self.cost_timelist: list[float] = []
+        self.solver_time_timelist: list[float] = []
 
         self._idle = False
         self.finishing = False # If approaching the last node of the reference path
@@ -246,6 +263,14 @@ class TrajectoryTracker:
                 self.base_speed = self.robot_spec.lin_vel_max*1.0
             else:
                 raise ModuleNotFoundError(f'There is no mode called {mode}.')
+
+    def set_monitor(self, monitor_on:bool=True):
+        """Set the monitor on or off.
+
+        Args:
+            monitor_on: If the monitor is on. Defaults to True.
+        """
+        self.monitor_on = monitor_on
 
     def set_current_state(self, current_state: np.ndarray):
         """To synchronize the current state of the robot with the trajectory tracker.
@@ -292,7 +317,8 @@ class TrajectoryTracker:
         return self._idle
 
 
-    def run_step(self, static_obstacles: list[list[PathNode]], full_dyn_obstacle_list:Optional[list]=None, other_robot_states:Optional[list]=None, map_updated:bool=True):
+    def run_step(self, static_obstacles: list[list[PathNode]], full_dyn_obstacle_list:Optional[list]=None, other_robot_states:Optional[list]=None, 
+                 map_updated:bool=True, report_cost:bool=False):
         """Run the trajectory planner for one step given the surrounding environment.
 
         Args:
@@ -300,22 +326,37 @@ class TrajectoryTracker:
             full_dyn_obstacle_list: A list of dynamic obstacles. Defaults to None.
             other_robot_states: A list of other robots' states. Defaults to None.
             map_updated: If the map is updated at this time step. Defaults to True.
+            report_cost: If the cost should be reported. Defaults to False.
 
         Returns:
             actions: A list of future actions
             pred_states: A list of predicted states
             ref_states: Reference states
+            debug_info: Debug information, details in Notes.
+
+        Notes:
             cost: The cost of the predicted trajectory
             closest_obstacle_list: A list of closest static obstacles
+            step_runtime: The runtime of this step
+            monitored_cost: The monitored costs if the monitor is on
         """
+        if self.vb and not self.monitor_on and report_cost:
+            warnings.warn("The monitor is off, the cost will not be reported.", UserWarning)
+
+        step_time_start = timer()
         if map_updated or (not self._map_loaded):
             self._stc_constraints, self._closest_obstacle_list = self.get_stc_constraints(static_obstacles)
             self._map_loaded = True
         dyn_constraints = self.get_dyn_constraints(full_dyn_obstacle_list)
-        actions, pred_states, ref_states, cost = self._run_step(self._stc_constraints, dyn_constraints, other_robot_states)
-        return actions, pred_states, ref_states, cost, self._closest_obstacle_list
+        actions, pred_states, ref_states, cost, monitored_cost = self._run_step(self._stc_constraints, dyn_constraints, other_robot_states, report_cost)
+        step_runtime = timer()-step_time_start
+        debug_info = DebugInfo(cost=cost, 
+                               closest_obstacle_list=self._closest_obstacle_list, 
+                               step_runtime=step_runtime, 
+                               monitored_cost=monitored_cost)
+        return actions, pred_states, ref_states, debug_info
 
-    def _run_step(self, stc_constraints: list, dyn_constraints: list, other_robot_states:Optional[list]=None):
+    def _run_step(self, stc_constraints: list, dyn_constraints: list, other_robot_states:Optional[list]=None, report_cost:bool=False):
         """Run the trajectory planner for one step, wrapped by `run_step`.
 
         Args:
@@ -329,6 +370,7 @@ class TrajectoryTracker:
             pred_states: A list of predicted states
             ref_states: Reference states
             cost: The cost of the predicted trajectory
+            monitored_costs: The monitored costs if the monitor is on
         """
         if other_robot_states is None:
             other_robot_states = [-10] * (self.ns*(self.N_hor+1)*self.config.Nother)
@@ -341,7 +383,7 @@ class TrajectoryTracker:
         ### Get reference velocities ###
         dist_to_goal = math.hypot(self.state[0]-self.final_goal[0], self.state[1]-self.final_goal[1]) # change ref speed if final goal close
         if (dist_to_goal < self.base_speed*self.N_hor*self.ts) and self.finishing:
-            speed_ref = dist_to_goal / self.N_hor / self.ts
+            speed_ref = dist_to_goal / self.N_hor / self.ts * 2
             speed_ref = min(speed_ref, self.robot_spec.lin_vel_max)
             speed_ref_list = [speed_ref]*self.N_hor
         else:
@@ -356,14 +398,21 @@ class TrajectoryTracker:
 
         try:
             # self.solver_debug(stc_constraints) # use to check (visualize) the environment
-            taken_states, pred_states, actions, cost, solver_time, exit_status = self.run_solver(params, self.state, self.config.action_steps)
+            taken_states, pred_states, actions, cost, solver_time, exit_status, u = self.run_solver(params, self.state, self.config.action_steps)
             if exit_status in self.config.bad_exit_codes and self.vb:
                 print(f"[{self.__class__.__name__}] Bad converge status: {exit_status}")
         except RuntimeError:
             if self.use_tcp:
                 self.mng.kill()
             raise RuntimeError(f"[{self.__class__.__name__}] Cannot run solver.")
+        
+        monitored_costs = None
+        if self.monitor_on:
+            monitored_costs = self.cost_monitor.get_cost(self.state, params, u, report=report_cost)
 
+        assert isinstance(cost, float)
+        assert isinstance(actions, list)
+        assert isinstance(pred_states, list)
         self.past_states.append(self.state)
         self.past_states += taken_states[:-1]
         self.past_actions += actions
@@ -371,7 +420,7 @@ class TrajectoryTracker:
         self.cost_timelist.append(cost)
         self.solver_time_timelist.append(solver_time)
 
-        return actions, pred_states, ref_states, cost
+        return actions, pred_states, ref_states, cost, monitored_costs
 
     def run_solver(self, parameters:list, state: np.ndarray, take_steps:int=1):
         """Run the solver for the pre-defined MPC problem.
@@ -391,6 +440,7 @@ class TrajectoryTracker:
             cost: The cost value of this step
             solver_time: Time cost for solving MPC of the current time step
             exit_status: The exit state of the solver.
+            u: The optimal control input within the horizon.
 
         Notes:
             The motion model (dynamics) is defined initially.
@@ -402,7 +452,7 @@ class TrajectoryTracker:
             import opengen as og
             solution:og.opengen.tcp.solver_status.SolverStatus = self.solver.run(parameters)
             
-            u:List[float]       = solution.solution
+            u:list[float]       = solution.solution
             cost:float          = solution.cost
             exit_status:str     = solution.exit_status
             solver_time:float   = solution.solve_time_ms
@@ -415,13 +465,13 @@ class TrajectoryTracker:
 
         else:
             raise ModuleNotFoundError(f'There is no solver with type {self.solver_type}.')
-            
-        taken_states:List[np.ndarray] = []
+        
+        taken_states:list[np.ndarray] = []
         for i in range(take_steps):
             state_next = self.motion_model(state, np.array(u[(i*self.nu):((i+1)*self.nu)]), self.ts)
             taken_states.append(state_next)
 
-        pred_states:List[np.ndarray] = [taken_states[-1]]
+        pred_states:list[np.ndarray] = [taken_states[-1]]
         for i in range(len(u)//self.nu):
             pred_state_next = self.motion_model(pred_states[-1], np.array(u[(i*self.nu):(2+i*self.nu)]), self.ts)
             pred_states.append(pred_state_next)
@@ -429,13 +479,13 @@ class TrajectoryTracker:
 
         actions = np.array(u[:self.nu*take_steps]).reshape(take_steps, self.nu).tolist()
         actions = [np.array(action) for action in actions]
-        return taken_states, pred_states, actions, cost, solver_time, exit_status
+        return taken_states, pred_states, actions, cost, solver_time, exit_status, u
 
     def run_solver_tcp(self, parameters:list, state: np.ndarray, take_steps:int=1):
         solution = self.mng.call(parameters)
         if solution.is_ok(): # Solver returned a solution
             solution = solution.get()
-            u:List[float]       = solution.solution
+            u:list[float]       = solution.solution
             cost:float          = solution.cost
             exit_status:str     = solution.exit_status
             solver_time:float   = solution.solve_time_ms
@@ -446,12 +496,12 @@ class TrajectoryTracker:
             self.mng.kill() # kill so rust code wont keep running if python crashes
             raise RuntimeError(f"[{self.__class__.__name__}] MPC Solver error: [{error_code}]{error_msg}")
 
-        taken_states:List[np.ndarray] = []
+        taken_states:list[np.ndarray] = []
         for i in range(take_steps):
             state_next = self.motion_model( state, np.array(u[(i*self.nu):((i+1)*self.nu)]), self.ts )
             taken_states.append(state_next)
 
-        pred_states:List[np.ndarray] = [taken_states[-1]]
+        pred_states:list[np.ndarray] = [taken_states[-1]]
         for i in range(len(u)//self.nu):
             pred_state_next = self.motion_model( pred_states[-1], np.array(u[(i*self.nu):(2+i*self.nu)]), self.ts )
             pred_states.append(pred_state_next)
@@ -459,8 +509,21 @@ class TrajectoryTracker:
 
         actions = np.array(u[:self.nu*take_steps]).reshape(take_steps, self.nu).tolist()
         actions = [np.array(action) for action in actions]
-        return taken_states, pred_states, actions, cost, solver_time, exit_status
+        return taken_states, pred_states, actions, cost, solver_time, exit_status, u
     
+    def report_cost(self, real_cost: float, step_runtime: float, monitored_cost: MonitoredCost, object_id:Optional[str]=None, report_steps:bool=False):
+        def colored_print(r, g, b, text, end='\n'):
+            print(f"\033[38;2;{r};{g};{b}m{text} \033[38;2;255;255;255m", end=end) 
+        if self.monitor_on:
+            self.cost_monitor.report_cost(monitored_cost, object_id=object_id, report_steps=report_steps)
+        solver_time = round(self.solver_time_timelist[-1], 3)
+        if solver_time > 0.8*self.ts*1000:
+            colored_print(0, 255, 0, f"Real cost: {round(real_cost, 4)}. Step runtime: {round(step_runtime, 3)} sec.", end=' ')
+            colored_print(255, 0, 0, f"Solver time: {solver_time} ms.")
+        else:
+            colored_print(0, 255, 0, f"Real cost: {round(real_cost, 4)}. Step runtime: {round(step_runtime, 3)} sec. Solver time: {solver_time} ms.")
+        print("="*20)
+        
 
     @staticmethod
     def lineseg_dists(points: np.ndarray, line_points_1: np.ndarray, line_points_2: np.ndarray) -> np.ndarray:
