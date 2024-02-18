@@ -69,9 +69,10 @@ class TrajectoryTracker:
             use_tcp: If the PANOC solver is called via TCP or not. Defaults to False.
             verbose: If print out debug information. Defaults to False.
         """
-        print(f"[{self.__class__.__name__}] Initializing robot {robot_id if robot_id is not None else 'X'}...")
+        print(f"[{self.__class__.__name__}-{robot_id}] Initializing robot {robot_id if robot_id is not None else 'X'}...")
 
         self.vb = verbose
+        self.robot_id = robot_id if robot_id is not None else 'X'
         self.config = config
         self.robot_spec = robot_specification
 
@@ -84,9 +85,10 @@ class TrajectoryTracker:
 
         # Initialization
         self._idle = True
+        self._mode: str = 'none'
         self._map_loaded = False
         self._obstacle_weights()
-        self.set_work_mode(mode='safe')
+        self.set_work_mode(mode='safe', use_predefined_speed=True)
 
         # Monitor
         self.monitor_on = False
@@ -231,7 +233,7 @@ class TrajectoryTracker:
         self._idle = False
         self.finishing = False # If approaching the last node of the reference path
 
-    def set_work_mode(self, mode:str='safe'):
+    def set_work_mode(self, mode:str='safe', use_predefined_speed:bool=True):
         """Set the basic work mode (base speed and weight parameters) of the MPC solver.
 
         Args:
@@ -247,22 +249,30 @@ class TrajectoryTracker:
         Notes:
             This method will overwrite the base speed.
         """
-        
+        if mode == self._mode:
+            return
+
+        print(f"[{self.__class__.__name__}-{self.robot_id}] Setting work mode to {mode}.")
+        self._mode = mode
         if mode == 'aligning':
-            self.base_speed = self.robot_spec.lin_vel_max*0.5
-            self.tuning_params = [0.0] * self.config.nq
-            self.tuning_params[2] = 100
+            if use_predefined_speed:
+                self.base_speed = self.robot_spec.lin_vel_max*0.5
+            self.tuning_params = [self.config.qpos, self.config.qvel, self.config.qtheta, self.config.lin_vel_penalty, self.config.ang_vel_penalty,
+                                  self.config.qpN, self.config.qthetaN, self.config.qrpd, self.config.lin_acc_penalty, self.config.ang_acc_penalty]
+            self.tuning_params = [x*0.1 for x in self.tuning_params]
+            self.tuning_params[2] = max(self.tuning_params) * 100
         else:
             self.tuning_params = [self.config.qpos, self.config.qvel, self.config.qtheta, self.config.lin_vel_penalty, self.config.ang_vel_penalty,
                                   self.config.qpN, self.config.qthetaN, self.config.qrpd, self.config.lin_acc_penalty, self.config.ang_acc_penalty]
-            if mode == 'safe':
-                self.base_speed = self.robot_spec.lin_vel_max*0.2
-            elif mode == 'work':
-                self.base_speed = self.robot_spec.lin_vel_max*0.8
-            elif mode == 'super':
-                self.base_speed = self.robot_spec.lin_vel_max*1.0
-            else:
-                raise ModuleNotFoundError(f'There is no mode called {mode}.')
+            if use_predefined_speed:
+                if mode == 'safe':
+                    self.base_speed = self.robot_spec.lin_vel_max*0.2
+                elif mode == 'work':
+                    self.base_speed = self.robot_spec.lin_vel_max*0.8
+                elif mode == 'super':
+                    self.base_speed = self.robot_spec.lin_vel_max*1.0
+                else:
+                    raise ModuleNotFoundError(f'There is no mode called {mode}.')
 
     def set_monitor(self, monitor_on:bool=True):
         """Set the monitor on or off.
@@ -298,6 +308,8 @@ class TrajectoryTracker:
         self.ref_states = ref_states
         if ref_speed is not None:
             self.base_speed = ref_speed
+        else:
+            self.set_work_mode(mode='work', use_predefined_speed=True)
 
     def check_termination_condition(self, external_check=True) -> bool:
         """Check if the robot finishes the trajectory tracking.
@@ -313,7 +325,7 @@ class TrajectoryTracker:
             if np.allclose(self.state[:2], self.final_goal[:2], atol=0.1, rtol=0) and abs(self.past_actions[-1][0]) < 0.1:
                 self._idle = True
                 if self.vb:
-                    print(f"[{self.__class__.__name__}] Trajectory tracking finished.")
+                    print(f"[{self.__class__.__name__}-{self.robot_id}] Trajectory tracking finished.")
         return self._idle
 
 
@@ -390,6 +402,18 @@ class TrajectoryTracker:
             speed_ref_list = [self.base_speed]*self.N_hor
 
         last_u = self.past_actions[-1] if len(self.past_actions) else np.zeros(self.nu)
+
+        ### Complementary restrictions for velocity and angular velocity ###
+        # speed_decay = 0.0
+        # current_ref_theta = math.degrees(ref_states[0, 2]) % 360
+        # current_theta = math.degrees(self.state[2]) % 360
+        # if (theta_diff := (abs(current_ref_theta - current_theta) % 180)) > 120:
+        #     self.set_work_mode(mode='aligning')
+        # elif theta_diff > 60:
+        #     speed_decay = min(max(theta_diff/180, 0.0), 1.0)
+        #     self.set_work_mode(mode='work', use_predefined_speed=False)
+        # else:
+        self.set_work_mode(mode='work', use_predefined_speed=False)
             
         ### Assemble parameters for solver & Run MPC###
         params = list(last_u) + list(self.state) + list(finish_state) + self.tuning_params + \
@@ -399,12 +423,13 @@ class TrajectoryTracker:
         try:
             # self.solver_debug(stc_constraints) # use to check (visualize) the environment
             taken_states, pred_states, actions, cost, solver_time, exit_status, u = self.run_solver(params, self.state, self.config.action_steps)
+            # actions = [x*np.array([1.0-speed_decay, 1.0]) for x in actions]
             if exit_status in self.config.bad_exit_codes and self.vb:
-                print(f"[{self.__class__.__name__}] Bad converge status: {exit_status}")
+                print(f"[{self.__class__.__name__}-{self.robot_id}] Bad converge status: {exit_status}")
         except RuntimeError:
             if self.use_tcp:
                 self.mng.kill()
-            raise RuntimeError(f"[{self.__class__.__name__}] Cannot run solver.")
+            raise RuntimeError(f"[{self.__class__.__name__}-{self.robot_id}] Cannot run solver.")
         
         monitored_costs = None
         if self.monitor_on:
@@ -494,7 +519,7 @@ class TrajectoryTracker:
             error_code = solver_error.code
             error_msg = solver_error.message
             self.mng.kill() # kill so rust code wont keep running if python crashes
-            raise RuntimeError(f"[{self.__class__.__name__}] MPC Solver error: [{error_code}]{error_msg}")
+            raise RuntimeError(f"[{self.__class__.__name__}-{self.robot_id}] MPC Solver error: [{error_code}]{error_msg}")
 
         taken_states:list[np.ndarray] = []
         for i in range(take_steps):
@@ -518,10 +543,10 @@ class TrajectoryTracker:
             self.cost_monitor.report_cost(monitored_cost, object_id=object_id, report_steps=report_steps)
         solver_time = round(self.solver_time_timelist[-1], 3)
         if solver_time > 0.8*self.ts*1000:
-            colored_print(0, 255, 0, f"Real cost: {round(real_cost, 4)}. Step runtime: {round(step_runtime, 3)} sec.", end=' ')
+            colored_print(0, 255, 0, f"Mode: {self._mode}. Real cost: {round(real_cost, 4)}. Step runtime: {round(step_runtime, 3)} sec.", end=' ')
             colored_print(255, 0, 0, f"Solver time: {solver_time} ms.")
         else:
-            colored_print(0, 255, 0, f"Real cost: {round(real_cost, 4)}. Step runtime: {round(step_runtime, 3)} sec. Solver time: {solver_time} ms.")
+            colored_print(0, 255, 0, f"Mode: {self._mode}. Real cost: {round(real_cost, 4)}. Step runtime: {round(step_runtime, 3)} sec. Solver time: {solver_time} ms.")
         print("="*20)
         
 

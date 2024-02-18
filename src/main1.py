@@ -17,27 +17,31 @@ from configs import CircularRobotSpecification
 from visualizer.object import CircularVehicleVisualizer
 from visualizer.mpc_plot import MpcPlotInLoop # type: ignore
 
-ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
-# DATA_DIR = os.path.join(ROOT_DIR, "data", "test_data")
-DATA_DIR = os.path.join(ROOT_DIR, "data", "schedule_demo1_data")
-CNFG_DIR = os.path.join(ROOT_DIR, "config")
-VB = False
+DATA_NAME = "test_data" # "test_data" or "schedule_demo1_data"
+CFG_FNAME = "mpc_default.yaml" # "mpc_default.yaml" or "mpc_fast.yaml"
+AUTORUN = True # if false, press key (in the plot window) to continue
+MONITOR_COST = False # if true, monitor the cost (this will slow down the simulation)
+VERBOSE = False
 TIMEOUT = 1000
+
+root_dir = pathlib.Path(__file__).resolve().parents[1]
+data_dir = os.path.join(root_dir, "data", DATA_NAME)
+cnfg_dir = os.path.join(root_dir, "config")
 
 robot_ids = None # if none, read from schedule
 
 ### Configurations
-config_mpc_path = os.path.join(CNFG_DIR, "mpc_default.yaml")
-config_robot_path = os.path.join(CNFG_DIR, "robot_spec.yaml")
+config_mpc_path = os.path.join(cnfg_dir, CFG_FNAME)
+config_robot_path = os.path.join(cnfg_dir, "robot_spec.yaml")
 
 config_mpc = MpcConfiguration.from_yaml(config_mpc_path)
 config_robot = CircularRobotSpecification.from_yaml(config_robot_path)
 
 ### Map, graph, and schedule paths
-map_path = os.path.join(DATA_DIR, "map.json")
-graph_path = os.path.join(DATA_DIR, "graph.json")
-schedule_path = os.path.join(DATA_DIR, "schedule.csv")
-start_path = os.path.join(DATA_DIR, "robot_start.json")
+map_path = os.path.join(data_dir, "map.json")
+graph_path = os.path.join(data_dir, "graph.json")
+schedule_path = os.path.join(data_dir, "schedule.csv")
+start_path = os.path.join(data_dir, "robot_start.json")
 with open(start_path, "r") as f:
     robot_starts = json.load(f)
 
@@ -53,12 +57,11 @@ robot_manager = RobotManager()
 for rid in robot_ids:
     robot = robot_manager.create_robot(config_robot, UnicycleModel(sampling_time=config_robot.ts), rid)
     robot.set_state(np.asarray(robot_starts[str(rid)]))
-    planner = LocalTrajPlanner(config_mpc.ts, config_mpc.N_hor, config_robot.lin_vel_max, verbose=VB)
+    planner = LocalTrajPlanner(config_mpc.ts, config_mpc.N_hor, config_robot.lin_vel_max, verbose=VERBOSE)
     planner.load_map(gpc.inflated_map.boundary_coords, gpc.inflated_map.obstacle_coords_list)
-    controller = TrajectoryTracker(config_mpc, config_robot, robot_id=rid, verbose=VB)
+    controller = TrajectoryTracker(config_mpc, config_robot, robot_id=rid, verbose=VERBOSE)
     controller.load_motion_model(UnicycleModel(sampling_time=config_mpc.ts))
-    if robot_ids.index(rid) == 0:
-        controller.set_monitor(monitor_on=True)
+    controller.set_monitor(monitor_on=MONITOR_COST)
     visualizer = CircularVehicleVisualizer(config_robot.vehicle_width, indicate_angle=True)
     robot_manager.add_robot(robot, controller, planner, visualizer)
 
@@ -92,6 +95,7 @@ for kt in range(TIMEOUT):
 
         ref_states, ref_speed, *_ = planner.get_local_ref(kt*config_mpc.ts, (float(robot.state[0]), float(robot.state[1])) )
         print(f"Robot {rid} ref speed: {round(ref_speed, 4)}") # XXX
+        controller.set_current_state(robot.state)
         controller.set_ref_states(ref_states, ref_speed=ref_speed)
         (actions, pred_states, current_refs, debug_info) = controller.run_step(static_obstacles=static_obstacles,
                                                        full_dyn_obstacle_list=None,
@@ -114,7 +118,7 @@ for kt in range(TIMEOUT):
 
         robot_states.append(robot.state)
     
-    main_plotter.plot_in_loop(time=kt*config_mpc.ts, autorun=False, zoom_in=None)
+    main_plotter.plot_in_loop(time=kt*config_mpc.ts, autorun=AUTORUN, zoom_in=None)
     if not incomplete:
         break
     

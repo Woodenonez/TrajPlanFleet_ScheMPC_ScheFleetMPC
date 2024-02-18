@@ -132,7 +132,7 @@ class CostMonitor:
         start_time = timer()
         self._set_params(new_params, new_actions)
         step_cost_list:list[CostTerms] = []
-        total_cost = CostTerms.zero()
+        total_cost = CostTerms()
         state = last_state
         for kt in range(self._cfg.N_hor):
             state, step_cost = self._get_step_cost(kt, ca.SX(state))
@@ -169,7 +169,7 @@ class CostMonitor:
             prt_obj_info = ""
 
         final_cost = total_cost.sum_values()+terminal_cost+cost_acc+cost_w_acc
-        print("="*20)
+        print("-"*20)
         print(f"Cost report{prt_obj_info} - Runtime {round(self.runtime, 3)} sec - Total cost {round(float(final_cost), 4)}:")
         print(f"  - Ref path deviation: {total_cost.cost_rpd}")
         print(f"  - Ref velocity deviation: {total_cost.cost_rvd}")

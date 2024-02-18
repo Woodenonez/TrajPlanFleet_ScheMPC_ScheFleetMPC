@@ -142,11 +142,12 @@ class PanocBuilder:
         kt = step_in_horizon
         state = self._motion_model(last_state, action, self.ts)
         pts = penalty_terms
-        cts = mc.CostTerms.zero()
+        cts = mc.CostTerms()
 
         ### Reference deviation costs
-        cts.cost_rpd = mc.cost_refpath_deviation(state, ref_states, weight=pts['rpd'])
+        cts.cost_rpd = mc.cost_refpath_deviation(state, ref_states[:2, :], weight=pts['rpd'])
         cts.cost_rvd = pts['vel'] * (action[0]-ref_speed)**2
+        cts.cost_rtd = 0.0
         cts.cost_input = ca.sum1(ca.vertcat(pts['v'], pts['w']) * action**2) 
 
         ### Fleet collision avoidance
@@ -228,7 +229,7 @@ class PanocBuilder:
         print(f'[{self.__class__.__name__}] Building MPC module...')
         
         ref_states = ca.reshape(self._r_s, (self.ns, self.N_hor)) # each column is a state
-        ref_states = ca.horzcat(ref_states, ref_states[:,[-1]])[:2, :]
+        ref_states = ca.horzcat(ref_states, ref_states[:,[-1]])
 
         other_x_0 = self._c_0[ ::self.ns] # first  state
         other_y_0 = self._c_0[1::self.ns] # second state
