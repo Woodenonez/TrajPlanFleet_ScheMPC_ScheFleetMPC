@@ -126,3 +126,12 @@ for kt in range(TIMEOUT):
 main_plotter.show()
 input('Press anything to finish!')
 main_plotter.close()
+
+if MONITOR_COST: # XXX
+    import matplotlib.pyplot as plt # type: ignore
+    fig, ax = plt.subplots(1, 1)
+    solve_time = controller.solver_time_timelist
+    ax.plot(solve_time, label="Solve time")
+    ax.set_title(f"Solve time for Robot {rid}")
+    ax.legend()
+    plt.show()

@@ -174,6 +174,7 @@ class PanocBuilder:
             penalty_constraints_stcobs += ca.fmax(0, ca.vertcat(inside_stc_obstacle))
 
         ### Dynamic obstacles
+        penalty_constraints_dynobs = 0.0
         if step_in_horizon < critical_step:
             x_dyn     = dynamic_obstacles[0::self._cfg.ndynobs*(self.N_hor+1)]
             y_dyn     = dynamic_obstacles[1::self._cfg.ndynobs*(self.N_hor+1)]
@@ -185,13 +186,14 @@ class PanocBuilder:
                              rx_dyn+self._spec.vehicle_margin+self._spec.social_margin, 
                              ry_dyn+self._spec.vehicle_margin+self._spec.social_margin, 
                              As, alpha_dyn]
-            cts.cost_dynobs = mc.cost_inside_ellipses(state.T, ellipse_param, weight=self._large_weight)
+            cts.cost_dynobs += mc.cost_inside_ellipses(state.T, ellipse_param, weight=self._large_weight)
 
             inside_dyn_obstacle = mh.inside_ellipses(state, [x_dyn, y_dyn, rx_dyn, ry_dyn, As])
-            penalty_constraints_dynobs = ca.fmax(0, inside_dyn_obstacle)
+            penalty_constraints_dynobs += ca.fmax(0, inside_dyn_obstacle)
         else:
-            cts.cost_dynobs = 0.0
+            cts.cost_dynobs += 0.0
         ### Dynamic obstacles [Predictive]
+        penalty_constraints_dynobs_pred = 0.0
         ### (x, y, rx, ry, angle, alpha) for obstacle 0 for N steps, then similar for obstalce 1 for N steps...
         x_dyn     = dynamic_obstacles[(kt+1)*self._cfg.ndynobs  ::self._cfg.ndynobs*(self.N_hor+1)]
         y_dyn     = dynamic_obstacles[(kt+1)*self._cfg.ndynobs+1::self._cfg.ndynobs*(self.N_hor+1)]
@@ -203,10 +205,10 @@ class PanocBuilder:
                          rx_dyn+self._spec.vehicle_margin, 
                          ry_dyn+self._spec.vehicle_margin, 
                          As, alpha_dyn]
-        cts.cost_dynobs_pred = mc.cost_inside_ellipses(state.T, ellipse_param, weight=q_dynobs)
+        cts.cost_dynobs_pred += mc.cost_inside_ellipses(state.T, ellipse_param, weight=q_dynobs)
 
-        # inside_dyn_obstacle = mh.inside_ellipses(state.T, [x_dyn, y_dyn, rx_dyn, ry_dyn, As])
-        # penalty_constraints_dynobs_pred = ca.fmax(0, inside_dyn_obstacle)
+        inside_dyn_obstacle = mh.inside_ellipses(state.T, [x_dyn, y_dyn, rx_dyn, ry_dyn, As])
+        penalty_constraints_dynobs_pred += ca.fmax(0, inside_dyn_obstacle)
 
         other_stuff = [penalty_constraints_stcobs, penalty_constraints_dynobs]
         return state, cts, other_stuff
