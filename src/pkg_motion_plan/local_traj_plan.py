@@ -136,11 +136,12 @@ class LocalTrajPlanner:
 
         self._idle = False
 
-    def get_local_ref(self, current_time: float, current_pos: PathNode, idx_check_range:int=10):
+    def get_local_ref(self, current_time: float, current_pos: PathNode, idx_check_range:int=10, external_ref_speed:Optional[float]=None):
         """Get the local reference from the current time and position.
 
         Args:
             idx_check_range: For linear sampling, the range of the index to check the docking point.
+            external_ref_speed: The external reference speed used for resampling the reference states.
 
         Raises:
             ValueError: Sampling method not supported.
@@ -158,6 +159,8 @@ class LocalTrajPlanner:
             raise ValueError('Sampling method not supported.')
         if (ref_speed is not None) and (ref_speed > 1e-6):
             ref_states = self.downsample_ref_states(ref_states, self.traj_gen.speed, ref_speed)
+        if external_ref_speed is not None:
+            ref_states = self.downsample_ref_states(ref_states, self.traj_gen.speed, external_ref_speed)
         if done:
             self._idle = True
         return ref_states, ref_speed, done
